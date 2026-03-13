@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>对话测试 — Backend API Tester</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-logo">API<span>Tester</span></div>
+    <div class="nav-section">基础</div>
+    <a href="/"><span class="icon">⚙️</span><span>配置</span></a>
+    <div class="nav-section">测试模块</div>
+    <a href="/character"><span class="icon">🧙</span><span>创角</span></a>
+    <a href="/quest"><span class="icon">📜</span><span>任务生成</span></a>
+    <a href="/dialogue" class="active"><span class="icon">💬</span><span>对话</span></a>
+    <a href="/announcement"><span class="icon">📢</span><span>公告</span></a>
+    <a href="/item"><span class="icon">🗡️</span><span>道具生成</span></a>
+  </nav>
+  <main>
+    <div class="page-title">💬 对话测试</div>
+    <div class="page-subtitle">与 NPC 进行多轮对话，查看回复、动作列表和选项提示；也可查看/清除历史记录</div>
+
+    <!-- 会话配置 -->
+    <div class="card">
+      <div class="card-title">会话参数</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>World ID *</label>
+          <input type="text" id="d-world" placeholder="world_001">
+        </div>
+        <div class="form-group">
+          <label>Character ID *</label>
+          <input type="text" id="d-char" placeholder="char_abc123">
+        </div>
+        <div class="form-group">
+          <label>用户名 (user_name)</label>
+          <input type="text" id="d-user" placeholder="player_001">
+        </div>
+        <div class="form-group">
+          <label>用户称谓 (user_pronoun)</label>
+          <input type="text" id="d-pronoun" placeholder="冒险者">
+        </div>
+        <div class="form-group">
+          <label>环境描述</label>
+          <input type="text" id="d-env" placeholder="小镇广场，阳光明媚">
+        </div>
+        <div class="form-group">
+          <label>感知信息</label>
+          <input type="text" id="d-obs" placeholder="附近有几个村民">
+        </div>
+      </div>
+    </div>
+
+    <!-- 对话窗口 -->
+    <div class="card">
+      <div class="card-title">对话窗口</div>
+      <div class="chat-window" id="chat-window">
+        <div style="text-align:center;color:var(--text2);font-size:12px">在下方输入内容开始对话</div>
+      </div>
+
+      <!-- 快捷选项 -->
+      <div id="options-bar" class="options-list mt-8" style="display:none"></div>
+
+      <!-- 输入框 -->
+      <div style="display:flex;gap:10px;margin-top:12px">
+        <input type="text" id="d-input" placeholder="输入对话内容，按 Enter 发送..." style="flex:1"
+          onkeydown="if(event.key==='Enter')sendTalk()">
+        <button class="btn btn-primary" id="btn-talk" onclick="sendTalk()">发送</button>
+        <span id="talk-spinner" style="display:none"><span class="spinner"></span></span>
+      </div>
+
+      <!-- Actions 展示 -->
+      <div id="actions-panel" style="display:none" class="mt-8">
+        <div class="response-label">Actions</div>
+        <div id="actions-content" class="response-box"><pre class="json-view"></pre></div>
+      </div>
+    </div>
+
+    <!-- 对话历史 -->
+    <div class="card">
+      <div class="card-title">历史记录查询</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Limit</label>
+          <input type="number" id="hist-limit" value="20" min="1" max="100">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="loadHistory()">📋 查询历史</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteHistory()">🗑️ 清除历史</button>
+      </div>
+      <div id="history-result"></div>
+    </div>
+
+    <!-- 对话改写 -->
+    <div class="card">
+      <div class="card-title">对话风格改写（dialogue_rewrite）</div>
+      <div class="alert alert-info" style="margin-bottom:16px">将剧情对话改写为符合当前 NPC 风格的表达</div>
+      <div class="form-group full" style="margin-bottom:14px">
+        <label>对话列表（JSON 格式）</label>
+        <textarea id="rewrite-input" style="min-height:120px">[
+  {"speaker": "Partner", "original_text": "你好，旅行者，有什么需要帮忙的吗？"},
+  {"speaker": "Partner", "original_text": "这里最近不太平，注意安全。"}
+]</textarea>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="doRewrite()">✏️ 改写对话</button>
+      </div>
+      <div id="rewrite-result"></div>
+    </div>
+  </main>
+
+  <script>
+    const chatHistory = [];
+
+    function addMessage(role, text, extra) {
+      const cw = document.getElementById('chat-window');
+      const isFirst = cw.children.length === 1 && cw.children[0].style.textAlign === 'center';
+      if (isFirst) cw.innerHTML = '';
+
+      const div = document.createElement('div');
+      div.className = `msg ${role === 'user' ? 'msg-user' : 'msg-npc'}`;
+      div.innerHTML = `
+        <div>
+          <div class="msg-meta">${role === 'user' ? '🧑 玩家' : '🤖 NPC'}</div>
+          <div class="msg-bubble">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+          ${extra ? `<div class="text-sm text-muted mt-8">${extra}</div>` : ''}
+        </div>`;
+      cw.appendChild(div);
+      cw.scrollTop = cw.scrollHeight;
+    }
+
+    async function sendTalk() {
+      const worldId = document.getElementById('d-world').value;
+      const charId = document.getElementById('d-char').value;
+      const text = document.getElementById('d-input').value.trim();
+      if (!worldId || !charId) return alert('请先填写 world_id 和 character_id');
+      if (!text) return;
+
+      addMessage('user', text);
+      document.getElementById('d-input').value = '';
+      document.getElementById('btn-talk').disabled = true;
+      document.getElementById('talk-spinner').style.display = 'inline';
+      document.getElementById('options-bar').style.display = 'none';
+
+      const fd = new FormData();
+      fd.append('world_id', worldId);
+      fd.append('character_id', charId);
+      fd.append('text', text);
+      fd.append('user_name', document.getElementById('d-user').value || 'player');
+      fd.append('user_pronoun', document.getElementById('d-pronoun').value || '冒险者');
+      fd.append('environment', document.getElementById('d-env').value || '');
+      fd.append('observation_log', document.getElementById('d-obs').value || '');
+
+      const res = await fetch('/api/dialogue/talk', { method: 'POST', body: fd });
+      const data = await res.json();
+
+      document.getElementById('btn-talk').disabled = false;
+      document.getElementById('talk-spinner').style.display = 'none';
+
+      if (!res.ok) {
+        addMessage('npc', `❌ 错误: ${data.error || JSON.stringify(data)}`);
+        return;
+      }
+
+      // Extract NPC reply
+      let reply = data.response || '';
+      // Strip XML tags from reply
+      reply = reply.replace(/<[^>]+>/g, '').trim();
+      addMessage('npc', reply || '（无回复内容）');
+
+      // Show options
+      if (data.options && data.options.length) {
+        const bar = document.getElementById('options-bar');
+        bar.style.display = 'flex';
+        bar.innerHTML = data.options.map(opt =>
+          `<button class="option-btn" onclick="selectOption('${opt.replace(/'/g, "\\'")}')">${opt}</button>`
+        ).join('');
+      }
+
+      // Show actions
+      if (data.actions && data.actions.length) {
+        document.getElementById('actions-panel').style.display = 'block';
+        document.getElementById('actions-content').querySelector('pre').textContent =
+          JSON.stringify(data.actions, null, 2);
+      }
+    }
+
+    function selectOption(text) {
+      document.getElementById('d-input').value = text;
+      sendTalk();
+    }
+
+    async function loadHistory() {
+      const worldId = document.getElementById('d-world').value;
+      const charId = document.getElementById('d-char').value;
+      if (!worldId || !charId) return alert('请填写 world_id 和 character_id');
+      const limit = document.getElementById('hist-limit').value || 20;
+      const res = await fetch(`/api/dialogue/history?world_id=${worldId}&character_id=${charId}&limit=${limit}`);
+      const data = await res.json();
+      document.getElementById('history-result').innerHTML =
+        `<div class="response-box mt-8"><pre class="json-view">${JSON.stringify(data, null, 2)}</pre></div>`;
+    }
+
+    async function deleteHistory() {
+      if (!confirm('确定清除该角色的对话历史？')) return;
+      const worldId = document.getElementById('d-world').value;
+      const charId = document.getElementById('d-char').value;
+      if (!worldId || !charId) return alert('请填写 world_id 和 character_id');
+      const fd = new FormData();
+      fd.append('world_id', worldId);
+      fd.append('character_id', charId);
+      const res = await fetch('/api/dialogue/delete-history', { method: 'POST', body: fd });
+      const data = await res.json();
+      document.getElementById('history-result').innerHTML =
+        res.ok
+          ? `<div class="alert alert-success mt-8">✅ 已清除</div>`
+          : `<div class="alert alert-error mt-8">❌ ${JSON.stringify(data)}</div>`;
+    }
+
+    async function doRewrite() {
+      const charId = document.getElementById('d-char').value;
+      if (!charId) return alert('请先填写 character_id');
+      let dialogues;
+      try { dialogues = JSON.parse(document.getElementById('rewrite-input').value); }
+      catch { return alert('JSON 格式错误'); }
+      const res = await fetch('/api/dialogue/rewrite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ character_id: charId, dialogues })
+      });
+      const data = await res.json();
+      document.getElementById('rewrite-result').innerHTML =
+        `<div class="response-box mt-8"><pre class="json-view">${JSON.stringify(data, null, 2)}</pre></div>`;
+    }
+  </script>
+</body>
+</html>
