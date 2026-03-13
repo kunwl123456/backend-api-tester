@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>任务生成 — Backend API Tester</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-logo">API<span>Tester</span></div>
+    <div class="nav-section">基础</div>
+    <a href="/"><span class="icon">⚙️</span><span>配置</span></a>
+    <div class="nav-section">测试模块</div>
+    <a href="/character"><span class="icon">🧙</span><span>创角</span></a>
+    <a href="/quest" class="active"><span class="icon">📜</span><span>任务生成</span></a>
+    <a href="/dialogue"><span class="icon">💬</span><span>对话</span></a>
+    <a href="/announcement"><span class="icon">📢</span><span>公告</span></a>
+    <a href="/item"><span class="icon">🗡️</span><span>道具生成</span></a>
+  </nav>
+  <main>
+    <div class="page-title">📜 任务生成测试</div>
+    <div class="page-subtitle">提交任务生成请求，轮询结果，展示任务数据和关联道具</div>
+
+    <div class="card">
+      <div class="card-title">提交任务生成</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>World ID *</label>
+          <input type="text" id="q-world" placeholder="world_001">
+        </div>
+        <div class="form-group">
+          <label>Character ID (NPC ID) *</label>
+          <input type="text" id="q-char" placeholder="char_abc123">
+        </div>
+        <div class="form-group">
+          <label>Stage Number *</label>
+          <input type="number" id="q-stage" placeholder="1" value="1" min="1">
+        </div>
+        <div class="form-group full">
+          <label>当前世界状态（可选）</label>
+          <textarea id="q-state" placeholder="玩家初次来到小镇，天色将暗..."></textarea>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-quest" onclick="submitQuest()">🚀 提交生成</button>
+        <button class="btn btn-ghost" onclick="pollQuestManual()">🔄 查询结果</button>
+        <span id="quest-spinner" style="display:none"><span class="spinner"></span> 生成中（约30~90秒）...</span>
+      </div>
+      <div id="quest-submit-result"></div>
+    </div>
+
+    <!-- 结果展示 -->
+    <div class="card" id="quest-result-card" style="display:none">
+      <div class="card-title">任务结果</div>
+      <div id="quest-outline" class="response-box" style="margin-bottom:16px;display:none">
+        <div class="response-label">任务大纲</div>
+        <pre id="quest-outline-text" class="json-view"></pre>
+      </div>
+      <div id="quest-data-section" style="display:none">
+        <div class="card-title" style="font-size:12px;margin-top:8px">Quest 数据</div>
+        <div id="quest-main" class="response-box" style="margin-bottom:12px"></div>
+        <div class="card-title" style="font-size:12px">Sequences</div>
+        <div id="quest-seqs" class="response-box" style="margin-bottom:12px"></div>
+        <div class="card-title" style="font-size:12px">Objectives（含道具）</div>
+        <div id="quest-objs"></div>
+      </div>
+    </div>
+
+    <!-- 道具详情弹层 -->
+    <div class="card" id="item-detail-card" style="display:none">
+      <div class="card-title">道具详情</div>
+      <div id="item-detail-content"></div>
+    </div>
+
+    <!-- 所有 Stage -->
+    <div class="card">
+      <div class="card-title">查询 NPC 所有任务阶段</div>
+      <div class="form-grid">
+        <div class="form-group full">
+          <label>npc_quests_id（格式：userId_worldId_characterId）</label>
+          <input type="text" id="all-stages-id" placeholder="user123_world001_char_abc">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="loadAllStages()">📋 获取所有阶段</button>
+      </div>
+      <div id="all-stages-result"></div>
+    </div>
+  </main>
+
+  <script>
+    let npcQuestsId = null;
+    let currentStage = 1;
+
+    async function submitQuest() {
+      const worldId = document.getElementById('q-world').value;
+      const charId = document.getElementById('q-char').value;
+      const stage = parseInt(document.getElementById('q-stage').value) || 1;
+      if (!worldId || !charId) return alert('world_id 和 character_id 不能为空');
+
+      document.getElementById('btn-quest').disabled = true;
+      document.getElementById('quest-spinner').style.display = 'inline';
+      currentStage = stage;
+
+      const fd = new FormData();
+      fd.append('world_id', worldId);
+      fd.append('character_id', charId);
+      fd.append('stage_number', stage);
+      const state = document.getElementById('q-state').value;
+      if (state) fd.append('current_world_state', state);
+
+      const res = await fetch('/api/quest/generate', { method: 'POST', body: fd });
+      const data = await res.json();
+      document.getElementById('btn-quest').disabled = false;
+
+      if (!res.ok) {
+        document.getElementById('quest-spinner').style.display = 'none';
+        document.getElementById('quest-submit-result').innerHTML =
+          `<div class="alert alert-error mt-8">❌ ${data.error || JSON.stringify(data)}</div>`;
+        return;
+      }
+
+      npcQuestsId = data.npc_quests_id;
+      if (npcQuestsId) {
+        document.getElementById('all-stages-id').value = npcQuestsId;
+      }
+
+      document.getElementById('quest-submit-result').innerHTML =
+        `<div class="alert alert-info mt-8">✅ 已提交，npc_quests_id: <code>${npcQuestsId}</code> | status: <span class="badge badge-orange">${data.status}</span></div>`;
+
+      if (data.status === 'completed') {
+        document.getElementById('quest-spinner').style.display = 'none';
+        renderQuestResult(data);
+      } else {
+        // Auto poll
+        await pollQuest();
+      }
+    }
+
+    async function pollQuestManual() {
+      if (!npcQuestsId) return alert('请先提交任务生成，或手动填写 npc_quests_id');
+      document.getElementById('quest-spinner').style.display = 'inline';
+      await pollQuest();
+    }
+
+    async function pollQuest() {
+      if (!npcQuestsId) return;
+      const res = await fetch(`/api/quest/poll?npc_quests_id=${npcQuestsId}&stage_number=${currentStage}`);
+      const data = await res.json();
+      document.getElementById('quest-spinner').style.display = 'none';
+      if (!res.ok) {
+        document.getElementById('quest-submit-result').innerHTML +=
+          `<div class="alert alert-error mt-8">❌ ${data.error || JSON.stringify(data)}</div>`;
+        return;
+      }
+      renderQuestResult(data);
+    }
+
+    function renderQuestResult(data) {
+      document.getElementById('quest-result-card').style.display = 'block';
+      if (data.outline) {
+        document.getElementById('quest-outline').style.display = 'block';
+        document.getElementById('quest-outline-text').textContent = data.outline;
+      }
+      if (data.quest_data) {
+        document.getElementById('quest-data-section').style.display = 'block';
+        const qd = data.quest_data;
+        document.getElementById('quest-main').innerHTML =
+          `<pre class="json-view">${JSON.stringify(qd.quest || qd, null, 2)}</pre>`;
+        if (qd.sequences) {
+          document.getElementById('quest-seqs').innerHTML =
+            `<pre class="json-view">${JSON.stringify(qd.sequences, null, 2)}</pre>`;
+        }
+        if (qd.objectives) {
+          renderObjectives(qd.objectives);
+        }
+      }
+    }
+
+    function renderObjectives(objectives) {
+      const el = document.getElementById('quest-objs');
+      el.innerHTML = objectives.map((obj, i) => {
+        const params = obj.ObjectiveParams || obj.objective_params || {};
+        const itemIds = extractItemIds(params);
+        return `
+          <div class="response-box" style="margin-bottom:10px">
+            <div class="response-label">Objective ${i + 1}: ${obj.ObjectiveTitle || obj.objective_title || ''}</div>
+            <pre class="json-view" style="margin-bottom:${itemIds.length ? '10px' : '0'}">${JSON.stringify(obj, null, 2)}</pre>
+            ${itemIds.map(id => `<button class="btn btn-ghost btn-sm" onclick="loadItem('${id}')">🗡️ 查看道具: ${id}</button>`).join(' ')}
+          </div>`;
+      }).join('');
+    }
+
+    function extractItemIds(params) {
+      const ids = [];
+      const scan = (v) => {
+        if (typeof v === 'string' && (v.startsWith('AI_') || v.startsWith('generated_item_') || v.startsWith('item_task_'))) {
+          ids.push(v);
+        } else if (typeof v === 'object' && v !== null) {
+          Object.values(v).forEach(scan);
+        }
+      };
+      scan(params);
+      return [...new Set(ids)];
+    }
+
+    async function loadItem(itemId) {
+      document.getElementById('item-detail-card').style.display = 'block';
+      document.getElementById('item-detail-content').innerHTML = '<span class="spinner"></span> 加载中...';
+      const res = await fetch(`/api/quest/item?item_id=${encodeURIComponent(itemId)}`);
+      const data = await res.json();
+      const el = document.getElementById('item-detail-content');
+      if (!res.ok) {
+        el.innerHTML = `<div class="alert alert-error">${data.error || JSON.stringify(data)}</div>`;
+        return;
+      }
+      const item = data.item_data || {};
+      el.innerHTML = `
+        <div style="display:flex;gap:16px;align-items:flex-start">
+          ${item.icon ? `<img src="${item.icon}" class="img-preview" style="margin-top:0" alt="道具图标" onerror="this.style.display='none'">` : ''}
+          <div style="flex:1">
+            <div style="font-size:16px;font-weight:700;margin-bottom:8px">${item.name || itemId}</div>
+            <div class="char-attrs" style="margin-bottom:8px">
+              ${item.item_sort ? `<span class="badge badge-blue">${item.item_sort}</span>` : ''}
+              ${item.item_type ? `<span class="badge badge-cyan">${item.item_type}</span>` : ''}
+              <span class="badge ${data.status === 'complete' ? 'badge-green' : 'badge-orange'}">${data.status}</span>
+            </div>
+            ${item.desc ? `<div class="text-sm text-muted">${item.desc}</div>` : ''}
+          </div>
+        </div>
+        <div class="response-box" style="margin-top:12px"><pre class="json-view">${JSON.stringify(data, null, 2)}</pre></div>`;
+      document.getElementById('item-detail-card').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    async function loadAllStages() {
+      const id = document.getElementById('all-stages-id').value.trim();
+      if (!id) return alert('请填写 npc_quests_id');
+      const res = await fetch(`/api/quest/stages?npc_quests_id=${encodeURIComponent(id)}`);
+      const data = await res.json();
+      const el = document.getElementById('all-stages-result');
+      el.innerHTML = `<div class="response-box mt-8"><pre class="json-view">${JSON.stringify(data, null, 2)}</pre></div>`;
+    }
+  </script>
+</body>
+</html>
