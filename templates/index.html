@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>配置 — Backend API Tester</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-logo">API<span>Tester</span></div>
+    <div class="nav-section">基础</div>
+    <a href="/" class="active"><span class="icon">⚙️</span><span>配置</span></a>
+    <div class="nav-section">测试模块</div>
+    <a href="/character"><span class="icon">🧙</span><span>创角</span></a>
+    <a href="/quest"><span class="icon">📜</span><span>任务生成</span></a>
+    <a href="/dialogue"><span class="icon">💬</span><span>对话</span></a>
+    <a href="/announcement"><span class="icon">📢</span><span>公告</span></a>
+    <a href="/item"><span class="icon">🗡️</span><span>道具生成</span></a>
+  </nav>
+  <main>
+    <div class="page-title">⚙️ 全局配置</div>
+    <div class="page-subtitle">设置后端地址和认证 Token，所有接口测试将使用此配置</div>
+
+    <div class="card">
+      <div class="card-title">连接配置</div>
+      <form id="config-form">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>后端 Base URL</label>
+            <input type="url" name="base_url" id="base_url" placeholder="http://localhost:31127" required>
+          </div>
+          <div class="form-group">
+            <label>用户名 (user_name)</label>
+            <input type="text" name="username" id="username" placeholder="player_001">
+          </div>
+          <div class="form-group full">
+            <label>JWT Token (Bearer)</label>
+            <input type="text" name="token" id="token" placeholder="eyJhbGciOiJIUzI1NiIs...">
+          </div>
+        </div>
+        <div class="btn-row">
+          <button type="button" class="btn btn-primary" onclick="saveConfig()">💾 保存配置</button>
+          <button type="button" class="btn btn-ghost" onclick="loadConfig()">🔄 加载当前配置</button>
+        </div>
+      </form>
+      <div id="config-result" class="mt-16"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">快速登录（自动写入 Token）</div>
+      <form id="login-form">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>邮箱</label>
+            <input type="email" name="email" id="email" placeholder="user@example.com">
+          </div>
+          <div class="form-group">
+            <label>密码</label>
+            <input type="password" name="password" id="password" placeholder="••••••••">
+          </div>
+        </div>
+        <div class="btn-row">
+          <button type="button" class="btn btn-success" onclick="doLogin()">🔐 登录并获取 Token</button>
+        </div>
+      </form>
+      <div id="login-result" class="mt-16"></div>
+    </div>
+  </main>
+
+  <script>
+    async function saveConfig() {
+      const form = document.getElementById('config-form');
+      const fd = new FormData(form);
+      const res = await fetch('/api/config', { method: 'POST', body: fd });
+      const data = await res.json();
+      const el = document.getElementById('config-result');
+      el.innerHTML = res.ok
+        ? `<div class="alert alert-success">✅ ${data.message}</div>`
+        : `<div class="alert alert-error">❌ ${data.error || JSON.stringify(data)}</div>`;
+    }
+
+    async function loadConfig() {
+      const res = await fetch('/api/config/get');
+      const data = await res.json();
+      if (data.base_url) document.getElementById('base_url').value = data.base_url;
+      if (data.username) document.getElementById('username').value = data.username;
+      document.getElementById('config-result').innerHTML =
+        `<div class="alert alert-info">当前配置：URL=${data.base_url} | Token=${data.token} | User=${data.username}</div>`;
+    }
+
+    async function doLogin() {
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const fd = new FormData();
+      fd.append('email', email);
+      fd.append('password', password);
+      const res = await fetch('/api/auth/login', { method: 'POST', body: fd });
+      const data = await res.json();
+      const el = document.getElementById('login-result');
+      if (res.ok && data.session) {
+        document.getElementById('token').value = data.session.access_token || '';
+        el.innerHTML = `<div class="alert alert-success">✅ 登录成功，Token 已自动填入并保存</div>`;
+        await saveConfig();
+      } else {
+        el.innerHTML = `<div class="alert alert-error">❌ 登录失败<pre>${JSON.stringify(data, null, 2)}</pre></div>`;
+      }
+    }
+
+    loadConfig();
+  </script>
+</body>
+</html>
