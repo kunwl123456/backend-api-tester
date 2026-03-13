@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>道具生成 — Backend API Tester</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-logo">API<span>Tester</span></div>
+    <div class="nav-section">基础</div>
+    <a href="/"><span class="icon">⚙️</span><span>配置</span></a>
+    <div class="nav-section">测试模块</div>
+    <a href="/character"><span class="icon">🧙</span><span>创角</span></a>
+    <a href="/quest"><span class="icon">📜</span><span>任务生成</span></a>
+    <a href="/dialogue"><span class="icon">💬</span><span>对话</span></a>
+    <a href="/announcement"><span class="icon">📢</span><span>公告</span></a>
+    <a href="/item" class="active"><span class="icon">🗡️</span><span>道具生成</span></a>
+  </nav>
+  <main>
+    <div class="page-title">🗡️ 道具生成测试</div>
+    <div class="page-subtitle">AI 全流程生成道具：分类 → 命名 → 脚本 → 图标，支持轮询查询结果</div>
+
+    <div class="card">
+      <div class="card-title">提交道具生成 /itemGen/generate</div>
+      <div class="form-grid">
+        <div class="form-group full">
+          <label>道具描述提示词 *</label>
+          <textarea id="item-prompt" placeholder="一把古老的精灵弓，由白银和魔法水晶打造，射出的箭矢带有冰霜效果"></textarea>
+        </div>
+        <div class="form-group">
+          <label>道具分类（可选，跳过 AI 分类）</label>
+          <select id="item-sort">
+            <option value="">由 AI 自动判断</option>
+            <option value="武器">武器</option>
+            <option value="装备">装备</option>
+            <option value="食物">食物</option>
+            <option value="材料">材料</option>
+            <option value="任务道具">任务道具</option>
+            <option value="消耗品">消耗品</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>附加上下文（可选）</label>
+          <input type="text" id="item-context" placeholder="中世纪奇幻世界">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-item-gen" onclick="generateItem()">⚒️ 生成道具</button>
+        <span id="item-spinner" style="display:none"><span class="spinner"></span> 生成中（约30秒）...</span>
+      </div>
+      <div id="gen-submit-result"></div>
+    </div>
+
+    <!-- 查询任务状态 -->
+    <div class="card">
+      <div class="card-title">查询任务状态 /itemGen/task_status</div>
+      <div class="form-grid">
+        <div class="form-group full">
+          <label>Task ID</label>
+          <input type="text" id="item-task-id" placeholder="由上方生成后自动填入，或手动输入">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="pollItemManual()">🔄 查询状态</button>
+      </div>
+      <div id="item-status-result"></div>
+    </div>
+
+    <!-- 生成结果展示 -->
+    <div class="card" id="item-result-card" style="display:none">
+      <div class="card-title">道具结果</div>
+      <div id="item-display"></div>
+    </div>
+
+    <!-- 历史记录（本次会话） -->
+    <div class="card">
+      <div class="card-title">本次会话生成记录</div>
+      <div id="item-history" class="item-grid">
+        <div class="text-muted text-sm">暂无生成记录</div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const sessionItems = [];
+    let autoPolling = false;
+
+    async function generateItem() {
+      const prompt = document.getElementById('item-prompt').value.trim();
+      if (!prompt) return alert('道具描述不能为空');
+
+      document.getElementById('btn-item-gen').disabled = true;
+      document.getElementById('item-spinner').style.display = 'inline';
+
+      const fd = new FormData();
+      fd.append('item_prompt', prompt);
+      const sort = document.getElementById('item-sort').value;
+      if (sort) fd.append('item_sort', sort);
+      const ctx = document.getElementById('item-context').value;
+      if (ctx) fd.append('context', ctx);
+
+      const res = await fetch('/api/item/generate', { method: 'POST', body: fd });
+      const data = await res.json();
+
+      document.getElementById('btn-item-gen').disabled = false;
+
+      if (!res.ok) {
+        document.getElementById('item-spinner').style.display = 'none';
+        document.getElementById('gen-submit-result').innerHTML =
+          `<div class="alert alert-error mt-8">❌ ${data.error || JSON.stringify(data)}</div>`;
+        return;
+      }
+
+      const taskId = data.task_id || data.id;
+      document.getElementById('item-task-id').value = taskId || '';
+      document.getElementById('gen-submit-result').innerHTML =
+        `<div class="alert alert-info mt-8">✅ 已提交，Task ID: <code>${taskId}</code></div>`;
+
+      if (taskId) {
+        await autoPollItem(taskId);
+      }
+    }
+
+    async function autoPollItem(taskId) {
+      const maxTries = 30;
+      for (let i = 0; i < maxTries; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const res = await fetch(`/api/item/status?task_id=${encodeURIComponent(taskId)}`);
+        const data = await res.json();
+        if (data.status === 'complete' || data.status === 'completed') {
+          document.getElementById('item-spinner').style.display = 'none';
+          renderItemResult(data);
+          return;
+        }
+        if (data.status === 'failed') {
+          document.getElementById('item-spinner').style.display = 'none';
+          document.getElementById('gen-submit-result').innerHTML +=
+            `<div class="alert alert-error mt-8">❌ 生成失败: ${data.error || ''}</div>`;
+          return;
+        }
+        document.getElementById('gen-submit-result').innerHTML =
+          `<div class="alert alert-warning mt-8">⏳ 状态: ${data.status}（第 ${i+1} 次查询）</div>`;
+      }
+      document.getElementById('item-spinner').style.display = 'none';
+      document.getElementById('gen-submit-result').innerHTML +=
+        `<div class="alert alert-warning mt-8">⚠️ 超时，请手动查询任务状态</div>`;
+    }
+
+    async function pollItemManual() {
+      const taskId = document.getElementById('item-task-id').value.trim();
+      if (!taskId) return alert('请填写 task_id');
+      const res = await fetch(`/api/item/status?task_id=${encodeURIComponent(taskId)}`);
+      const data = await res.json();
+      document.getElementById('item-status-result').innerHTML =
+        `<div class="response-box mt-8"><pre class="json-view">${JSON.stringify(data, null, 2)}</pre></div>`;
+      if (data.status === 'complete' || data.status === 'completed') {
+        renderItemResult(data);
+      }
+    }
+
+    function renderItemResult(data) {
+      const item = data.result || data.item_data || {};
+      document.getElementById('item-result-card').style.display = 'block';
+      const iconHtml = item.icon
+        ? `<img src="${item.icon}" class="img-preview" alt="道具图标" onerror="this.style.display='none'">`
+        : '<div style="width:80px;height:80px;background:var(--surface2);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:36px">🗡️</div>';
+      document.getElementById('item-display').innerHTML = `
+        <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+          ${iconHtml}
+          <div style="flex:1;min-width:200px">
+            <div style="font-size:18px;font-weight:700;margin-bottom:8px">${item.name || '未知道具'}</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+              ${item.item_sort ? `<span class="badge badge-blue">${item.item_sort}</span>` : ''}
+              ${item.item_type ? `<span class="badge badge-cyan">${item.item_type}</span>` : ''}
+              <span class="badge badge-green">生成完成</span>
+            </div>
+            ${item.desc ? `<div class="text-sm" style="line-height:1.6;color:var(--text2)">${item.desc}</div>` : ''}
+          </div>
+        </div>
+        ${item.script ? `<div class="mt-16"><div class="response-label">技能脚本</div><div class="response-box"><pre class="json-view">${item.script}</pre></div></div>` : ''}
+        <div class="response-box mt-16"><pre class="json-view">${JSON.stringify(data, null, 2)}</pre></div>`;
+
+      // Add to session history
+      sessionItems.unshift({ ...item, task_id: data.task_id });
+      renderHistory();
+      document.getElementById('item-result-card').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function renderHistory() {
+      const el = document.getElementById('item-history');
+      if (!sessionItems.length) return;
+      el.innerHTML = sessionItems.map(item => `
+        <div class="item-card" onclick="document.getElementById('item-task-id').value='${item.task_id||''}';pollItemManual()">
+          ${item.icon ? `<img src="${item.icon}" onerror="this.style.display='none'" alt="">` : '<div style="font-size:32px">🗡️</div>'}
+          <div class="item-name">${item.name || '未命名'}</div>
+          <div class="item-type">${[item.item_sort, item.item_type].filter(Boolean).join(' · ')}</div>
+        </div>`).join('');
+    }
+  </script>
+</body>
+</html>
