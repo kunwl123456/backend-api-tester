@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>公告 — Backend API Tester</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav>
+    <div class="nav-logo">API<span>Tester</span></div>
+    <div class="nav-section">基础</div>
+    <a href="/"><span class="icon">⚙️</span><span>配置</span></a>
+    <div class="nav-section">测试模块</div>
+    <a href="/character"><span class="icon">🧙</span><span>创角</span></a>
+    <a href="/quest"><span class="icon">📜</span><span>任务生成</span></a>
+    <a href="/dialogue"><span class="icon">💬</span><span>对话</span></a>
+    <a href="/announcement" class="active"><span class="icon">📢</span><span>公告</span></a>
+    <a href="/item"><span class="icon">🗡️</span><span>道具生成</span></a>
+  </nav>
+  <main>
+    <div class="page-title">📢 公告 &amp; 信息接口</div>
+    <div class="page-subtitle">测试公告、用户协议、用户信息和活跃统计等接口</div>
+
+    <!-- 公告 -->
+    <div class="card">
+      <div class="card-title">公告 /info/announcement</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>语言</label>
+          <select id="ann-lang">
+            <option value="">自动（由服务端判断）</option>
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="loadAnnouncement()">📢 获取公告</button>
+      </div>
+      <div id="ann-result"></div>
+    </div>
+
+    <!-- 用户协议 -->
+    <div class="card">
+      <div class="card-title">用户协议 /info/agreement</div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="loadAgreement()">📄 获取用户协议</button>
+      </div>
+      <div id="agr-result"></div>
+    </div>
+
+    <!-- 用户信息 -->
+    <div class="card">
+      <div class="card-title">用户信息 /user/get</div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="loadUserInfo()">👤 获取当前用户信息</button>
+      </div>
+      <div id="user-result"></div>
+    </div>
+
+    <!-- 活跃统计 -->
+    <div class="card">
+      <div class="card-title">活跃统计 /activity/my/stats</div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>统计天数</label>
+          <input type="number" id="act-days" value="30" min="1" max="365">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" onclick="loadActivity()">📊 获取活跃统计</button>
+      </div>
+      <div id="act-result"></div>
+    </div>
+  </main>
+
+  <script>
+    function renderResult(elId, ok, data) {
+      const el = document.getElementById(elId);
+      const text = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+      const isText = typeof data === 'string';
+      el.innerHTML = ok
+        ? `<div class="alert alert-success mt-8">✅ 请求成功</div>
+           <div class="response-box"><pre class="json-view">${isText ? text.replace(/</g,'&lt;') : text}</pre></div>`
+        : `<div class="alert alert-error mt-8">❌ 请求失败</div>
+           <div class="response-box"><pre class="json-view">${text}</pre></div>`;
+    }
+
+    async function loadAnnouncement() {
+      const lang = document.getElementById('ann-lang').value;
+      const url = '/api/announcement' + (lang ? '?language=' + lang : '');
+      const res = await fetch(url);
+      let data;
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('json')) { data = await res.json(); } else { data = await res.text(); }
+      renderResult('ann-result', res.ok, data);
+    }
+
+    async function loadAgreement() {
+      const res = await fetch('/api/agreement');
+      let data;
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('json')) { data = await res.json(); } else { data = await res.text(); }
+      renderResult('agr-result', res.ok, data);
+    }
+
+    async function loadUserInfo() {
+      const res = await fetch('/api/user/info');
+      const data = await res.json();
+      renderResult('user-result', res.ok, data);
+    }
+
+    async function loadActivity() {
+      const days = document.getElementById('act-days').value || 30;
+      const res = await fetch(`/api/activity/stats?days=${days}`);
+      const data = await res.json();
+      renderResult('act-result', res.ok, data);
+    }
+  </script>
+</body>
+</html>
